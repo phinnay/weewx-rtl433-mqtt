@@ -1,0 +1,11 @@
+0.1
+* initial release
+* subscribe to an mqtt broker fed by 'rtl_433 -F mqtt'
+* generic per-event JSON parsing - no per-sensor classes (the parsing is
+  delegated to rtl_433, which already produces decoded fields)
+* sensor_map uses <rtl_433_field>.<id>.<model> tuples with glob matching
+* unit_system option (US | METRIC) drives both usUnits and automatic
+  suffix-based conversion (_C<->_F, _mm<->_in, _km_h<->_mi_h,
+  _kph<->_mph, _hPa<->_inHg)
+* deltas section converts cumulative counters to per-period values
+* basic mqtt auth: host, port, topic, username, password, tls

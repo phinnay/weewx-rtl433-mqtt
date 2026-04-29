@@ -1,0 +1,208 @@
+weewx-rtl433-mqtt
+Distributed under terms of the GPLv3
+
+This is a driver for weewx that captures rtl_433 events from an MQTT broker.
+It is inspired by weewx-sdr (https://github.com/matthewwall/weewx-sdr) but
+takes a different approach: rtl_433 runs elsewhere - on a remote host, in a
+container, or wherever the SDR dongle lives - and publishes JSON events to
+MQTT.  This driver subscribes to those events and feeds them into weewx.
+
+If you want weewx to drive rtl_433 directly via a local USB dongle, use
+weewx-sdr instead.  This driver complements it; it does not replace it.
+
+
+===============================================================================
+Architecture
+
+  [SDR host]  rtl_433 -F "mqtt://broker:1883,events"
+                          |
+                          v
+                  [MQTT broker]
+                          |
+                          | subscribe rtl_433/+/events
+                          v
+  [weewx host]  user.rtl433mqtt  ->  sensor_map  ->  weewx database
+
+The driver does no demodulation - rtl_433 has already turned the radio
+into structured JSON before the message hits the broker.
+
+
+===============================================================================
+Installation
+
+0) install pre-requisites
+
+  a) install weewx
+      http://weewx.com/docs
+  b) install rtl_433 on the host with the SDR dongle
+      https://github.com/merbanan/rtl_433
+  c) install paho-mqtt on the weewx host
+      pip install paho-mqtt
+  d) you need an MQTT broker reachable from both hosts (e.g. mosquitto)
+
+1) install the driver
+
+  weectl extension install /path/to/weewx-rtl433-mqtt
+
+2) configure the driver
+
+  weectl station reconfigure --driver=user.rtl433mqtt --no-prompt
+
+3) start rtl_433 on the SDR host with mqtt output
+
+  rtl_433 -M utc -F "mqtt://BROKER_HOST:1883,events"
+
+  The 'events' suffix tells rtl_433 to publish the full JSON event
+  (one publish per detection) to a topic of the form:
+
+    rtl_433/<HOSTNAME>/events
+
+4) verify events are arriving (optional)
+
+  mosquitto_sub -h BROKER_HOST -t 'rtl_433/+/events'
+
+  You should see one JSON line per detected event, e.g.:
+    {"time":"2024-01-15 10:23:45","model":"Acurite-Tower","id":11041,
+     "channel":"B","battery_ok":1,"temperature_C":22.5,"humidity":45}
+
+5) edit the [RTL433MQTT] section of weewx.conf (see below)
+
+6) start weewx
+
+  sudo systemctl start weewx
+
+
+===============================================================================
+Configuration - the sensor_map
+
+Each entry in [[sensor_map]] maps a weewx database field to a tuple
+identifying the source field on a specific sensor:
+
+  <weewx_field> = <rtl_433_field>.<sensor_id>.<rtl_433_model>
+
+For example, an Acurite Tower sensor with id 11041 publishing in metric
+mode produces:
+
+  {"model":"Acurite-Tower","id":11041,"temperature_C":22.5,"humidity":45,
+   "battery_ok":1}
+
+To map its temperature to outTemp, humidity to outHumidity, and battery
+status to outBatteryStatus:
+
+[RTL433MQTT]
+    driver = user.rtl433mqtt
+    host = mqtt.local
+    [[sensor_map]]
+        outTemp           = temperature_C.11041.Acurite-Tower
+        outHumidity       = humidity.11041.Acurite-Tower
+        outBatteryStatus  = battery.11041.Acurite-Tower
+
+NOTE: the field part uses the rtl_433 unit suffix that matches your
+unit_system setting.  With unit_system = METRIC (default), use
+temperature_C / rain_mm / wind_avg_km_h.  With unit_system = US, the
+driver renames those fields automatically, so you map to
+temperature_F / rain_in / wind_avg_mi_h.
+
+NOTE: the model part is rtl_433's 'model' field verbatim
+(e.g. 'Acurite-Tower' with a hyphen).  This is NOT the same as
+weewx-sdr's PacketClassName-style identifier - sensor maps cannot be
+copied between the two drivers without translation.
+
+Glob-style patterns work in any of the three components:
+
+    [[sensor_map]]
+        outTemp = temperature_C.*.Acurite-Tower
+
+
+===============================================================================
+Configuration - MQTT connection
+
+[RTL433MQTT]
+    driver = user.rtl433mqtt
+    host = localhost                       # required
+    port = 1883                            # default 1883
+    topic = rtl_433/+/events               # default
+    # username =                           # optional
+    # password =                           # optional
+    # tls = false                          # optional, default false
+    # client_id =                          # optional
+
+
+===============================================================================
+Configuration - unit_system
+
+The driver claims one unit system for every event it produces, so weewx
+sees a coherent stream.  rtl_433 mostly emits SI units (_C, _mm, _km_h),
+so the default is METRIC and no conversion happens.
+
+If you prefer your weewx configured for US units, set unit_system = US
+and the driver will automatically rename and convert any of the following
+suffixes on its way out:
+
+    _C    <->  _F     (degrees)
+    _mm   <->  _in    (length)
+    _km_h <->  _mi_h  (speed)
+    _kph  <->  _mph   (speed, alternate label)
+    _hPa  <->  _inHg  (pressure)
+
+[RTL433MQTT]
+    driver = user.rtl433mqtt
+    unit_system = US
+
+A sensor that natively emits a mixed unit set (e.g. _F and _km_h in the
+same packet) will produce one converted field and one already-correct
+field after this pass; both are exposed.
+
+
+===============================================================================
+Configuration - deltas
+
+Some sensors publish cumulative counters (rain since startup, lifetime
+strike count).  WeeWX expects per-period observations.  The [[deltas]]
+section indicates which cumulative fields should be split into deltas:
+
+[RTL433MQTT]
+    [[deltas]]
+        rain                   = rain_total
+        lightning_strike_count = strike_count
+
+The default knows about rain and lightning strikes:
+
+    rain                   <- rain_total
+    lightning_strike_count <- strike_count
+
+For this to work, the sensor_map must map a cumulative field onto the
+right name, e.g.:
+
+    [[sensor_map]]
+        rain_total   = rain_mm.0026.Fineoffset-WH1080
+        strike_count = strike_count.151.Acurite-6045M
+
+
+===============================================================================
+Configuration - logging
+
+[RTL433MQTT]
+    driver = user.rtl433mqtt
+    log_unknown_sensors  = false   # log payloads we cannot parse as JSON
+    log_unmapped_sensors = false   # log packets that match no sensor_map entry
+    log_packets          = true    # log every yielded packet at debug level
+
+
+===============================================================================
+Diagnostics
+
+Subscribe to the broker directly to see exactly what is being published:
+
+  mosquitto_sub -h BROKER_HOST -t 'rtl_433/+/events' -v
+
+Run the driver's standalone mode to see how it parses each event:
+
+  PYTHONPATH=/usr/share/weewx python3 \
+      /etc/weewx/bin/user/rtl433mqtt.py \
+      --host BROKER_HOST --topic 'rtl_433/+/events'
+
+This prints one 'raw:' line per received event followed by a 'parsed:'
+line showing the dict the weewx pipeline would see (including the
+<field>.<id>.<model> tagging applied by the driver).  Use this to figure
+out the exact strings to put in your sensor_map.
