@@ -12,13 +12,13 @@ expects rtl_433 to be running elsewhere and publishing JSON events via
 bin/user/rtl433mqtt.py   single-file driver. module name `rtl433mqtt`,
                          driver = user.rtl433mqtt, config [RTL433MQTT]
 install.py               WeeWX ExtensionInstaller
-readme                   user-facing docs (plain text, weewx-sdr style)
+README.md                user-facing docs (markdown)
 changelog                per-version notes
 license                  GPLv3
 ```
 
-User-facing docs live in `readme`. This file is for design context that
-isn't obvious from the code.
+User-facing docs live in `README.md`. This file is for design context
+that isn't obvious from the code.
 
 ## Design decisions worth knowing
 
@@ -48,7 +48,7 @@ isn't obvious from the code.
 
 ## Test mode (standalone)
 
-`python3 bin/user/rtl433mqtt.py [flags]` runs the full parse → map →
+See `README.md` for usage examples. Internals: `python3 bin/user/rtl433mqtt.py [flags]` runs the full parse → map →
 delta pipeline against a live broker without needing WeeWX installed.
 The module's `import weewx` block falls back to stubs (`weewx.US`,
 `weewx.METRIC`, `AbstractDevice`, `AbstractConfEditor`, `tobool`) when

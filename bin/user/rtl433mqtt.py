@@ -6,7 +6,7 @@ weewx driver that consumes rtl_433 events from an MQTT broker.
 Inspired by weewx-sdr (https://github.com/matthewwall/weewx-sdr).  Where
 weewx-sdr spawns rtl_433 as a subprocess on the weewx host, this driver
 expects rtl_433 to be running elsewhere and publishing JSON events to
-MQTT via 'rtl_433 -F mqtt://<broker>:<port>,events'.  See the readme for
+MQTT via 'rtl_433 -F mqtt://<broker>:<port>,events'.  See README.md for
 a full architecture diagram and step-by-step setup.
 
 Configuration shape (full example - all options shown):
@@ -65,7 +65,7 @@ Standalone test mode:
       python3 rtl433mqtt.py --host BROKER             # parsed events only
       python3 rtl433mqtt.py --config /etc/weewx/weewx.conf  # incl. mapping
 
-  See 'python3 rtl433mqtt.py --help' or the readme for the full set of
+  See 'python3 rtl433mqtt.py --help' or README.md for the full set of
   flags and example invocations.
 """
 
