@@ -78,6 +78,18 @@ except ImportError as e:
         "paho-mqtt is required for user.rtl433mqtt: pip install paho-mqtt"
     ) from e
 
+
+def _make_mqtt_client(client_id=''):
+    # paho-mqtt 2.x requires an explicit callback_api_version; 1.x doesn't
+    # know the kwarg.  pin to VERSION1 so the existing on_connect /
+    # on_disconnect signatures keep working across both lines.
+    try:
+        return mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION1,
+            client_id=client_id)
+    except (TypeError, AttributeError):
+        return mqtt.Client(client_id=client_id)
+
 # weewx is hard-required when this module is loaded as a driver, but the
 # standalone test mode (run as __main__) can work without it.  fall back to
 # minimal stubs so 'python3 rtl433mqtt.py --config weewx.conf --host ...'
@@ -335,7 +347,7 @@ class RTL433MQTTDriver(weewx.drivers.AbstractDevice):
         loginf("deltas = %s" % self._deltas)
 
         self._queue = queue.Queue()
-        self._client = mqtt.Client(client_id=self._client_id)
+        self._client = _make_mqtt_client(client_id=self._client_id)
         if self._username:
             self._client.username_pw_set(self._username, self._password)
         if self._tls:
@@ -521,7 +533,7 @@ the file (a real weewx.conf works).  Any explicit flag overrides config."""
     def _on_msg(c, u, msg):
         q.put(msg.payload)
 
-    client = mqtt.Client()
+    client = _make_mqtt_client()
     if cfg['username']:
         client.username_pw_set(cfg['username'], cfg['password'])
     if cfg['tls']:
