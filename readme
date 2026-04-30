@@ -190,19 +190,62 @@ Configuration - logging
 
 
 ===============================================================================
-Diagnostics
+Standalone test mode
 
-Subscribe to the broker directly to see exactly what is being published:
+The driver can be run directly to exercise the full parse -> sensor_map ->
+deltas pipeline against a live MQTT broker, without needing a weewx
+install on the test machine.  Useful for:
+
+  - figuring out the exact <field>.<id>.<model> strings for your sensors
+  - verifying that a sensor_map you wrote actually picks up the right fields
+  - confirming the unit_system option is doing what you expect
+  - validating cumulative -> delta conversion before going live
+
+Requires: paho-mqtt (always), and configobj only if you use --config.
+weewx itself is NOT required.
+
+Quickest start - just see what's being published, with no mapping:
+
+  python3 rtl433mqtt.py --host BROKER_HOST
+
+Output for each event:
+  === event 1 ===
+  raw    : {"time":"2024-01-15 10:23:45","model":"Acurite-Tower",...}
+  parsed : {'dateTime': 1705314225, 'usUnits': 16,
+            'temperature_C.11041.Acurite-Tower': 22.5, ...}
+
+To exercise a sensor_map, point at your real weewx.conf (or any file with
+an [RTL433MQTT] stanza in it):
+
+  python3 rtl433mqtt.py --config /etc/weewx/weewx.conf
+
+This pulls host / port / topic / auth / unit_system / sensor_map / deltas
+all from the [RTL433MQTT] section.  Each event then prints:
+  raw    : <as published>
+  parsed : <after _parse_event>
+  mapped : <after sensor_map + deltas>   (or "<no sensor_map match>")
+
+Any flag overrides the config:
+
+  python3 rtl433mqtt.py --config /etc/weewx/weewx.conf --host other.broker
+  python3 rtl433mqtt.py --config /etc/weewx/weewx.conf --no-map
+
+  # (--no-map skips mapping even when --config has a sensor_map)
+
+All recognized flags:
+
+  --config FILE       weewx.conf-style file with an [RTL433MQTT] section
+  --host HOST         broker address
+  --port PORT         broker port (default 1883)
+  --topic TOPIC       MQTT topic (default rtl_433/+/events)
+  --username USER     broker auth username
+  --password PASS     broker auth password
+  --tls               use TLS for the broker connection
+  --unit-system SYS   US or METRIC (default METRIC)
+  --no-map            skip sensor_map even if --config provides one
+  --version           print driver version and exit
+
+You can also subscribe to the broker outside this driver to confirm
+events are arriving at all:
 
   mosquitto_sub -h BROKER_HOST -t 'rtl_433/+/events' -v
-
-Run the driver's standalone mode to see how it parses each event:
-
-  PYTHONPATH=/usr/share/weewx python3 \
-      /etc/weewx/bin/user/rtl433mqtt.py \
-      --host BROKER_HOST --topic 'rtl_433/+/events'
-
-This prints one 'raw:' line per received event followed by a 'parsed:'
-line showing the dict the weewx pipeline would see (including the
-<field>.<id>.<model> tagging applied by the driver).  Use this to figure
-out the exact strings to put in your sensor_map.

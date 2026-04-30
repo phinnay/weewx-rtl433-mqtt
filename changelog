@@ -1,6 +1,9 @@
 0.1
 * initial release
 * subscribe to an mqtt broker fed by 'rtl_433 -F mqtt'
+* standalone test mode that exercises the full parse/map/delta pipeline
+  against a live broker, no weewx install required.  --config FILE pulls
+  the [RTL433MQTT] section from a weewx.conf-style file.
 * generic per-event JSON parsing - no per-sensor classes (the parsing is
   delegated to rtl_433, which already produces decoded fields)
 * sensor_map uses <rtl_433_field>.<id>.<model> tuples with glob matching

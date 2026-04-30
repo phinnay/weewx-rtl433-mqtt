@@ -47,9 +47,33 @@ except ImportError as e:
         "paho-mqtt is required for user.rtl433mqtt: pip install paho-mqtt"
     ) from e
 
-import weewx
-import weewx.drivers
-from weeutil.weeutil import tobool
+# weewx is hard-required when this module is loaded as a driver, but the
+# standalone test mode (run as __main__) can work without it.  fall back to
+# minimal stubs so 'python3 rtl433mqtt.py --config weewx.conf --host ...'
+# works on a dev machine that doesn't have weewx installed.
+try:
+    import weewx
+    import weewx.drivers
+    from weeutil.weeutil import tobool
+except ImportError:
+    import types as _types
+    weewx = _types.ModuleType('weewx')
+    weewx.US = 1
+    weewx.METRIC = 16
+    class _StubIOError(Exception): pass
+    weewx.WeeWxIOError = _StubIOError
+    weewx.drivers = _types.ModuleType('weewx.drivers')
+    class _StubAbstractDevice: pass
+    class _StubAbstractConfEditor: pass
+    weewx.drivers.AbstractDevice = _StubAbstractDevice
+    weewx.drivers.AbstractConfEditor = _StubAbstractConfEditor
+
+    def tobool(v):
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return bool(v)
+        return str(v).strip().lower() in ('true', '1', 'yes', 'on')
 
 try:
     import weeutil.logger
@@ -377,22 +401,49 @@ class RTL433MQTTDriver(weewx.drivers.AbstractDevice):
         return out
 
 
-# standalone mode for diagnosing the broker / topic / parse pipeline
+# standalone test mode: subscribe to a live broker and exercise the full
+# parse -> map -> delta pipeline, printing each step.  works without weewx
+# installed (the import block above provides minimal stubs).  flags
+# override anything pulled from --config.
+def _load_config_section(path, section=DRIVER_NAME):
+    try:
+        import configobj
+    except ImportError:
+        raise SystemExit(
+            "configobj is required to read weewx.conf: pip install configobj")
+    cfg = configobj.ConfigObj(path, file_error=True)
+    if section not in cfg:
+        raise SystemExit("section [%s] not found in %s" % (section, path))
+    return cfg[section]
+
+
 if __name__ == '__main__':
     import optparse
-    usage = """%prog [--host HOST] [--port PORT] [--topic TOPIC]
+    import sys
+    usage = """%prog [--config FILE] [--host HOST] [--port PORT] [--topic TOPIC]
               [--username USER] [--password PASS] [--tls]
-              [--unit-system US|METRIC] [--debug] [--version]"""
+              [--unit-system US|METRIC] [--no-map] [--version]
+
+Test mode connects to a live MQTT broker and prints, for each event:
+  raw    : the JSON payload as published
+  parsed : the dict the parser produces (fields tagged <field>.<id>.<model>)
+  mapped : the dict after sensor_map + deltas (only if a sensor_map is loaded)
+
+With --config, sensor_map / deltas / unit_system / host / port / topic /
+username / password / tls are all pulled from the [RTL433MQTT] section of
+the file (a real weewx.conf works).  Any explicit flag overrides config."""
     parser = optparse.OptionParser(usage=usage)
-    parser.add_option('--host', default=DEFAULT_HOST)
-    parser.add_option('--port', type='int', default=DEFAULT_PORT)
-    parser.add_option('--topic', default=DEFAULT_TOPIC)
+    parser.add_option('--config', help='weewx.conf-style file with [%s] section'
+                      % DRIVER_NAME)
+    parser.add_option('--host')
+    parser.add_option('--port', type='int')
+    parser.add_option('--topic')
     parser.add_option('--username')
     parser.add_option('--password')
-    parser.add_option('--tls', action='store_true', default=False)
-    parser.add_option('--unit-system', default=DEFAULT_UNIT_SYSTEM,
-                      help='US or METRIC')
-    parser.add_option('--debug', action='store_true', default=False)
+    parser.add_option('--tls', action='store_true', default=None)
+    parser.add_option('--unit-system', help='US or METRIC')
+    parser.add_option('--no-map', action='store_true', default=False,
+                      help='skip sensor_map even if --config provides one')
     parser.add_option('--version', action='store_true', default=False)
     opts, _args = parser.parse_args()
 
@@ -400,20 +451,67 @@ if __name__ == '__main__':
         print("rtl433mqtt %s" % DRIVER_VERSION)
         raise SystemExit(0)
 
+    # start with built-in defaults, then layer config, then layer flags
+    cfg = {
+        'host': DEFAULT_HOST, 'port': DEFAULT_PORT, 'topic': DEFAULT_TOPIC,
+        'unit_system': DEFAULT_UNIT_SYSTEM,
+        'username': None, 'password': None, 'tls': False,
+        'sensor_map': {}, 'deltas': dict(RTL433MQTTDriver.DEFAULT_DELTAS),
+    }
+    if opts.config:
+        sec = _load_config_section(opts.config)
+        for k in ('host', 'port', 'topic', 'unit_system',
+                  'username', 'password', 'tls'):
+            if k in sec:
+                cfg[k] = sec[k]
+        if 'sensor_map' in sec:
+            cfg['sensor_map'] = dict(sec['sensor_map'])
+        if 'deltas' in sec:
+            cfg['deltas'] = dict(sec['deltas'])
+
+    if opts.host is not None:        cfg['host'] = opts.host
+    if opts.port is not None:        cfg['port'] = opts.port
+    if opts.topic is not None:       cfg['topic'] = opts.topic
+    if opts.username is not None:    cfg['username'] = opts.username
+    if opts.password is not None:    cfg['password'] = opts.password
+    if opts.tls is not None:         cfg['tls'] = opts.tls
+    if opts.unit_system is not None: cfg['unit_system'] = opts.unit_system
+    if opts.no_map:                  cfg['sensor_map'] = {}
+
+    cfg['port'] = int(cfg['port'])
+    cfg['tls'] = tobool(cfg['tls'])
+    cfg['unit_system'] = str(cfg['unit_system']).upper()
+    if cfg['unit_system'] not in ('US', 'METRIC'):
+        print("warning: unknown unit_system '%s', using METRIC"
+              % cfg['unit_system'])
+        cfg['unit_system'] = 'METRIC'
+
     q = queue.Queue()
     def _on_msg(c, u, msg):
         q.put(msg.payload)
 
     client = mqtt.Client()
-    if opts.username:
-        client.username_pw_set(opts.username, opts.password)
-    if opts.tls:
+    if cfg['username']:
+        client.username_pw_set(cfg['username'], cfg['password'])
+    if cfg['tls']:
         client.tls_set()
     client.on_message = _on_msg
-    client.connect(opts.host, opts.port, keepalive=60)
-    client.subscribe(opts.topic)
+    try:
+        client.connect(cfg['host'], cfg['port'], keepalive=60)
+    except (OSError, ValueError) as e:
+        raise SystemExit("connect to %s:%s failed: %s" %
+                         (cfg['host'], cfg['port'], e))
+    client.subscribe(cfg['topic'])
     client.loop_start()
-    print("subscribed to %s on %s:%s" % (opts.topic, opts.host, opts.port))
+
+    print("subscribed to %s on %s:%s (unit_system=%s)" %
+          (cfg['topic'], cfg['host'], cfg['port'], cfg['unit_system']))
+    print("sensor_map entries: %d" % len(cfg['sensor_map']))
+    print("deltas: %s" % cfg['deltas'])
+    print("waiting for events (Ctrl-C to stop)...")
+
+    counter_values = {}
+    n = 0
     try:
         while True:
             try:
@@ -422,10 +520,31 @@ if __name__ == '__main__':
                 continue
             if isinstance(payload, bytes):
                 payload = payload.decode('utf-8', errors='replace')
-            print("raw: %s" % payload.strip())
-            print("parsed: %s" % _parse_event(payload, opts.unit_system.upper()))
+            n += 1
+            print()
+            print("=== event %d ===" % n)
+            print("raw    : %s" % payload.strip())
+            packet = _parse_event(payload, cfg['unit_system'])
+            if packet is None:
+                print("parsed : <unparseable or no model>")
+                continue
+            print("parsed : %s" % packet)
+            if cfg['sensor_map']:
+                mapped = RTL433MQTTDriver.map_to_fields(
+                    packet, cfg['sensor_map'])
+                if not mapped:
+                    print("mapped : <no sensor_map match>")
+                    continue
+                # apply deltas just like the live driver
+                for dk, label in cfg['deltas'].items():
+                    if label in mapped:
+                        mapped[dk] = RTL433MQTTDriver._calculate_delta(
+                            label, mapped[label], counter_values.get(label))
+                        counter_values[label] = mapped[label]
+                print("mapped : %s" % mapped)
     except KeyboardInterrupt:
-        pass
+        print()
+        print("stopped after %d event(s)" % n)
     finally:
         client.loop_stop()
         client.disconnect()
