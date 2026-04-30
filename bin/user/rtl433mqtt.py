@@ -5,33 +5,64 @@ weewx driver that consumes rtl_433 events from an MQTT broker.
 
 Inspired by weewx-sdr (https://github.com/matthewwall/weewx-sdr).  Where
 weewx-sdr spawns rtl_433 as a subprocess on the weewx host, this driver
-expects rtl_433 to be running elsewhere and publishing JSON events to MQTT
-via 'rtl_433 -F mqtt://<broker>:<port>,events'.
+expects rtl_433 to be running elsewhere and publishing JSON events to
+MQTT via 'rtl_433 -F mqtt://<broker>:<port>,events'.  See the readme for
+a full architecture diagram and step-by-step setup.
 
-Configuration shape:
+Configuration shape (full example - all options shown):
 
-[RTL433MQTT]
-    driver = user.rtl433mqtt
-    host = mqtt.local
-    port = 1883
-    topic = rtl_433/+/events
-    # username = ...
-    # password = ...
-    # tls = true
-    unit_system = METRIC          # or US (also drives suffix conversion)
-    [[sensor_map]]
-        outTemp     = temperature_C.11041.Acurite-Tower
-        outHumidity = humidity.11041.Acurite-Tower
-        rain_total  = rain_mm.0026.Fineoffset-WH1080
-    [[deltas]]
-        rain                   = rain_total
-        lightning_strike_count = strike_count
+  [RTL433MQTT]
+      driver = user.rtl433mqtt
 
-The sensor_map tuple is <rtl_433_field>.<sensor_id>.<model>, where 'model'
-is exactly the string rtl_433 puts in its 'model' field
-(e.g. 'Acurite-Tower').  This is intentionally NOT the same as weewx-sdr's
-<obs>.<id>.<PacketClassName> syntax - weewx-sdr maps to its normalized
-field names; this driver maps to the raw rtl_433 fields.
+      # broker connection
+      host  = mqtt.local
+      port  = 1883
+      topic = rtl_433/+/events
+      # username = weewx
+      # password = SECRET
+      # tls = false
+      # client_id =
+
+      # METRIC (default; rtl_433 mostly emits SI) or US.  controls usUnits
+      # and triggers automatic suffix conversion (_C<->_F, _mm<->_in,
+      # _km_h<->_mi_h, _kph<->_mph, _hPa<->_inHg) on incoming events.
+      unit_system = METRIC
+
+      # log_unmapped_sensors = false  # noisy but useful while building map
+      # log_unknown_sensors  = false  # log payloads we cannot parse as JSON
+      # log_packets          = true   # log every yielded packet (debug level)
+
+      # sensor_map tuples are <rtl_433_field>.<sensor_id>.<rtl_433_model>.
+      # use the exact strings rtl_433 publishes (id is decimal, model is
+      # hyphenated like "Acurite-Tower").  fnmatch-style globs work in any
+      # of the three components.
+      [[sensor_map]]
+          outTemp     = temperature_C.11041.Acurite-Tower
+          outHumidity = humidity.11041.Acurite-Tower
+          rain_total  = rain_mm.38.Fineoffset-WH1080
+
+      # split cumulative counters (rain_total, strike_count) into deltas.
+      # the right-hand side is the field NAME in the mapped packet.
+      [[deltas]]
+          rain                   = rain_total
+          lightning_strike_count = strike_count
+
+The sensor_map tuple format is intentionally NOT the same as weewx-sdr's
+<obs>.<id>.<PacketClassName> syntax.  weewx-sdr maps to its normalized
+field names; this driver maps to the raw rtl_433 fields, so the strings
+differ - sensor maps cannot be copied between drivers without rewriting.
+
+Standalone test mode:
+
+  This module can be run directly to subscribe to a broker and dump the
+  full parse -> sensor_map -> delta pipeline for each event.  Does not
+  require weewx to be installed.  Most common forms:
+
+      python3 rtl433mqtt.py --host BROKER             # parsed events only
+      python3 rtl433mqtt.py --config /etc/weewx/weewx.conf  # incl. mapping
+
+  See 'python3 rtl433mqtt.py --help' or the readme for the full set of
+  flags and example invocations.
 """
 
 from calendar import timegm
