@@ -252,6 +252,15 @@ def _parse_event(payload, unit_system):
     model = str(obj['model'])
     sensor_id = obj.get('id', obj.get('sensor_id', ''))
     sensor_id = str(sensor_id)
+    # if the sensor has a channel switch (e.g. AmbientWeather-WH31E,
+    # Acurite multi-channel), append it to the id as <id>:<channel>.
+    # the channel is set by hardware and stable across battery changes,
+    # whereas the id rotates on power-cycle.  glob patterns like
+    # '*:2.AmbientWeather-WH31E' let users pin to channel without
+    # chasing the id.
+    channel = obj.get('channel')
+    if channel is not None and sensor_id != '':
+        sensor_id = '%s:%s' % (sensor_id, channel)
 
     pkt = {}
     skip = {'time', 'model', 'id', 'sensor_id'}

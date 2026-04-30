@@ -7,6 +7,11 @@
   deprecation warning by pinning callback_api_version=VERSION1)
 * added _m_s (meters/second) to the unit conversion table -
   Fineoffset-WH24 and similar emit wind_avg_m_s / wind_max_m_s
+* sensor_id portion of the tagged tuple now encodes channel as
+  <id>:<channel> when the rtl_433 event has a 'channel' field.  lets
+  multi-channel sensors (AmbientWeather-WH31E, Acurite Tower, Hideki
+  TS04) be pinned by channel with a glob on the id, surviving the
+  id-rotates-on-battery-change problem.
 * subscribe to an mqtt broker fed by 'rtl_433 -F mqtt'
 * standalone test mode that exercises the full parse/map/delta pipeline
   against a live broker, no weewx install required.  --config FILE pulls

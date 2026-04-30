@@ -136,6 +136,14 @@ NOTE: the model part is rtl_433's 'model' field verbatim
 weewx-sdr's PacketClassName-style identifier - sensor maps cannot be
 copied between the two drivers without translation.
 
+NOTE: when a sensor publishes a 'channel' field (Acurite multi-channel,
+AmbientWeather-WH31E, Hideki TS04, etc.), the driver appends it to the
+sensor_id portion of the tuple as <id>:<channel>.  The channel is set
+by hardware (a switch on the unit) and is stable across battery
+changes; the id rotates on power-cycle.  This lets you use a glob like
+'*:2.AmbientWeather-WH31E' to pin a channel without chasing the id -
+see the multi-channel example and "rotating IDs" section below.
+
 
 # Example 1: a single Acurite Tower sensor
 
@@ -241,7 +249,55 @@ to pin to a specific id:
         rain_total = rain_mm.*.*Rain*
 
 If you have two sensors of the same model and need to distinguish them,
-list each id explicitly rather than relying on globs.
+either list each id explicitly OR use the channel encoding (next
+section) when the sensors expose a channel field.
+
+
+# Sensors that rotate IDs on power-cycle / battery change
+
+Many cheap 433 / 915 MHz sensors generate a new id every time they boot
+(e.g. AmbientWeather-WH31E, several Acurite, Fineoffset).  Pinning to
+a specific id in your sensor_map means re-editing weewx.conf every time
+a battery dies.  Avoid this by globbing the id and pinning the model:
+
+    [[sensor_map]]
+        outTemp     = temperature_F.*.Fineoffset-WH24
+        outHumidity = humidity.*.Fineoffset-WH24
+
+This works for sensors where the model alone uniquely identifies the
+unit (one-of-a-kind in your environment).
+
+
+# Multi-channel sensors (multiple units of the same model)
+
+Sensors with a hardware channel switch publish a 'channel' field in
+their JSON.  Examples:
+  - AmbientWeather-WH31E (channels 1-8)
+  - Acurite Tower / 5n1 / Atlas (channels A/B/C)
+  - Hideki TS04 (channels 1-3)
+
+The driver appends the channel to the sensor_id as <id>:<channel> when
+present, so you can pin the channel (which is set by hardware and stays
+stable across battery changes) and glob the id (which rotates):
+
+    [[sensor_map]]
+        # WH31E on channel 1
+        extraTemp1  = temperature_F.*:1.AmbientWeather-WH31E
+        extraHumid1 = humidity.*:1.AmbientWeather-WH31E
+
+        # WH31E on channel 2 (a different physical unit, same model)
+        extraTemp2  = temperature_F.*:2.AmbientWeather-WH31E
+        extraHumid2 = humidity.*:2.AmbientWeather-WH31E
+
+        # Acurite-Tower on channel A
+        outTemp     = temperature_C.*:A.Acurite-Tower
+
+In test mode the parsed dict shows the encoded form
+('temperature_F.178:2.AmbientWeather-WH31E'), so you can read the right-
+hand side of your map straight from the test output.
+
+Sensors without a channel field (e.g. Fineoffset-WH24, WH32B) are
+tagged as plain <id>.<model> with no colon - no migration needed.
 
 
 ===============================================================================
