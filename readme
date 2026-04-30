@@ -256,6 +256,7 @@ Configuration - MQTT connection
     # password =                           # optional
     # tls = false                          # optional, default false
     # client_id =                          # optional
+    # ignore_lwt = true                    # default true; see below
 
 To consume only events from a specific rtl_433 host, set the topic to
 the exact path rather than using the wildcard:
@@ -350,6 +351,40 @@ the counter resets - no spurious negative numbers reach weewx.
 
 
 ===============================================================================
+Configuration - ignore_lwt (status / birth / will messages)
+
+When a client publishes to MQTT, brokers and the publishers themselves
+often emit "status" messages on the same topic tree the data lives on:
+
+  - LWT (Last Will and Testament): the broker publishes this on behalf
+    of a client when it disconnects unexpectedly.  Typical payload:
+    'offline'.
+  - Birth/online: the publisher itself publishes this when it connects.
+    Typical payload: 'online'.
+  - Custom status payloads from the publisher (e.g. JSON without a
+    'model' field).
+
+These payloads are not sensor events.  By default the driver silently
+drops anything that isn't a JSON object - those messages don't show up
+as parse errors, they just don't trigger anything:
+
+[RTL433MQTT]
+    ignore_lwt = true   # default
+
+If you want to see them anyway (debugging a publisher, tracking when
+sensors come online, etc.), turn it off:
+
+[RTL433MQTT]
+    ignore_lwt = false
+    log_unknown_sensors = true   # so they show up in the syslog
+
+In standalone test mode the same option is honored, and a
+'--show-status' flag overrides it on the command line:
+
+  python3 rtl433mqtt.py --host BROKER_HOST --show-status
+
+
+===============================================================================
 Configuration - logging
 
 [RTL433MQTT]
@@ -422,6 +457,7 @@ All recognized flags:
   --tls               use TLS for the broker connection
   --unit-system SYS   US or METRIC (default METRIC)
   --no-map            skip sensor_map even if --config provides one
+  --show-status       also display non-event messages (LWT, birth/status)
   --version           print driver version and exit
 
 You can also subscribe to the broker outside this driver to confirm

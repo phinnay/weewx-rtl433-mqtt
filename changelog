@@ -1,5 +1,10 @@
 0.1
 * initial release
+* ignore_lwt option (default true) silently drops MQTT LWT / birth /
+  status messages so they don't show up as parse errors.  test mode
+  honors the same option and adds --show-status to override.
+* compatibility with paho-mqtt 2.x (silences the v1 callback API
+  deprecation warning by pinning callback_api_version=VERSION1)
 * subscribe to an mqtt broker fed by 'rtl_433 -F mqtt'
 * standalone test mode that exercises the full parse/map/delta pipeline
   against a live broker, no weewx install required.  --config FILE pulls

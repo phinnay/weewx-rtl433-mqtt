@@ -23,6 +23,10 @@ Configuration shape (full example - all options shown):
       # tls = false
       # client_id =
 
+      # silently drop MQTT LWT / birth / status messages (anything not a
+      # JSON event payload).  default true.
+      ignore_lwt = true
+
       # METRIC (default; rtl_433 mostly emits SI) or US.  controls usUnits
       # and triggers automatic suffix conversion (_C<->_F, _mm<->_in,
       # _km_h<->_mi_h, _kph<->_mph, _hPa<->_inHg) on incoming events.
@@ -169,6 +173,19 @@ def confeditor_loader():
     return RTL433MQTTConfigurationEditor()
 
 
+def _is_event_payload(payload):
+    # quick heuristic: rtl_433 sensor events are always JSON objects.
+    # MQTT LWT / birth / status messages on the same topic tree are typically
+    # plain strings like 'online' or 'offline'.  filter those out early so
+    # they don't show up as parse errors.
+    if isinstance(payload, bytes):
+        try:
+            payload = payload.decode('utf-8', errors='replace')
+        except Exception:
+            return False
+    return payload.lstrip().startswith('{')
+
+
 def _parse_time(s):
     if not s:
         return int(time.time())
@@ -292,6 +309,12 @@ class RTL433MQTTConfigurationEditor(weewx.drivers.AbstractConfEditor):
     # suffix-based conversion (_C<->_F, _mm<->_in, _km_h<->_mi_h, etc.)
     unit_system = METRIC
 
+    # silently drop MQTT LWT / birth / status messages (anything not a
+    # JSON event payload).  rtl_433 events are always JSON objects; the
+    # broker may also publish bare strings like 'online' or 'offline' on
+    # the same topic tree.  default true.
+    ignore_lwt = true
+
     # sensor_map tuples are <rtl_433_field>.<sensor_id>.<rtl_433_model>.
     # the field part uses the rtl_433 unit suffix matching unit_system
     # (e.g. temperature_C with METRIC, temperature_F with US).
@@ -340,6 +363,12 @@ class RTL433MQTTDriver(weewx.drivers.AbstractDevice):
         self._log_unknown = tobool(stn_dict.get('log_unknown_sensors', False))
         self._log_unmapped = tobool(stn_dict.get('log_unmapped_sensors', False))
         self._log_packets = tobool(stn_dict.get('log_packets', True))
+
+        # default-true: silently drop MQTT LWT / birth / status messages.
+        # rtl_433 events are always JSON objects; status messages are bare
+        # strings like 'online'/'offline'.  set to false if you want those
+        # to flow through to log_unknown_sensors.
+        self._ignore_lwt = tobool(stn_dict.get('ignore_lwt', True))
 
         loginf("connecting to %s:%s topic=%s unit_system=%s"
                % (self._host, self._port, self._topic, self._unit_system))
@@ -399,6 +428,8 @@ class RTL433MQTTDriver(weewx.drivers.AbstractDevice):
                 continue
             if isinstance(payload, bytes):
                 payload = payload.decode('utf-8', errors='replace')
+            if self._ignore_lwt and not _is_event_payload(payload):
+                continue
             packet = _parse_event(payload, self._unit_system)
             if packet is None:
                 if self._log_unknown:
@@ -487,6 +518,9 @@ the file (a real weewx.conf works).  Any explicit flag overrides config."""
     parser.add_option('--unit-system', help='US or METRIC')
     parser.add_option('--no-map', action='store_true', default=False,
                       help='skip sensor_map even if --config provides one')
+    parser.add_option('--show-status', action='store_true', default=False,
+                      help='also display non-event messages (LWT, birth, '
+                      'status); overrides ignore_lwt')
     parser.add_option('--version', action='store_true', default=False)
     opts, _args = parser.parse_args()
 
@@ -499,12 +533,13 @@ the file (a real weewx.conf works).  Any explicit flag overrides config."""
         'host': DEFAULT_HOST, 'port': DEFAULT_PORT, 'topic': DEFAULT_TOPIC,
         'unit_system': DEFAULT_UNIT_SYSTEM,
         'username': None, 'password': None, 'tls': False,
+        'ignore_lwt': True,
         'sensor_map': {}, 'deltas': dict(RTL433MQTTDriver.DEFAULT_DELTAS),
     }
     if opts.config:
         sec = _load_config_section(opts.config)
         for k in ('host', 'port', 'topic', 'unit_system',
-                  'username', 'password', 'tls'):
+                  'username', 'password', 'tls', 'ignore_lwt'):
             if k in sec:
                 cfg[k] = sec[k]
         if 'sensor_map' in sec:
@@ -520,9 +555,11 @@ the file (a real weewx.conf works).  Any explicit flag overrides config."""
     if opts.tls is not None:         cfg['tls'] = opts.tls
     if opts.unit_system is not None: cfg['unit_system'] = opts.unit_system
     if opts.no_map:                  cfg['sensor_map'] = {}
+    if opts.show_status:             cfg['ignore_lwt'] = False
 
     cfg['port'] = int(cfg['port'])
     cfg['tls'] = tobool(cfg['tls'])
+    cfg['ignore_lwt'] = tobool(cfg['ignore_lwt'])
     cfg['unit_system'] = str(cfg['unit_system']).upper()
     if cfg['unit_system'] not in ('US', 'METRIC'):
         print("warning: unknown unit_system '%s', using METRIC"
@@ -549,8 +586,12 @@ the file (a real weewx.conf works).  Any explicit flag overrides config."""
 
     print("subscribed to %s on %s:%s (unit_system=%s)" %
           (cfg['topic'], cfg['host'], cfg['port'], cfg['unit_system']))
-    print("sensor_map entries: %d" % len(cfg['sensor_map']))
-    print("deltas: %s" % cfg['deltas'])
+    print("sensor_map entries: %d  deltas: %s" %
+          (len(cfg['sensor_map']), cfg['deltas']))
+    print("ignore_lwt=%s%s" %
+          (cfg['ignore_lwt'],
+           ' (use --show-status to also display non-event messages)'
+               if cfg['ignore_lwt'] else ''))
     print("waiting for events (Ctrl-C to stop)...")
 
     counter_values = {}
@@ -563,6 +604,8 @@ the file (a real weewx.conf works).  Any explicit flag overrides config."""
                 continue
             if isinstance(payload, bytes):
                 payload = payload.decode('utf-8', errors='replace')
+            if cfg['ignore_lwt'] and not _is_event_payload(payload):
+                continue
             n += 1
             print()
             print("=== event %d ===" % n)
