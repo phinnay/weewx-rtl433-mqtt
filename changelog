@@ -3,8 +3,11 @@
 * ignore_lwt option (default true) silently drops MQTT LWT / birth /
   status messages so they don't show up as parse errors.  test mode
   honors the same option and adds --show-status to override.
-* compatibility with paho-mqtt 2.x (silences the v1 callback API
-  deprecation warning by pinning callback_api_version=VERSION1)
+* compatibility with paho-mqtt 2.x: when available, construct Client
+  with callback_api_version=VERSION2 and use the v2 on_connect /
+  on_disconnect signatures (which take ConnectFlags/DisconnectFlags +
+  ReasonCode + Properties).  the callbacks dispatch on positional arity
+  so paho 1.x callers also still work.
 * added _m_s (meters/second) to the unit conversion table -
   Fineoffset-WH24 and similar emit wind_avg_m_s / wind_max_m_s
 * sensor_id portion of the tagged tuple now encodes channel as

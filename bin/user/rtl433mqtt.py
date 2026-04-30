@@ -83,16 +83,27 @@ except ImportError as e:
     ) from e
 
 
+# paho-mqtt 2.x deprecated the v1 callback API entirely (not just the
+# unspecified default).  detect the paho line at import time and pick
+# the matching callback signatures - see _on_connect / _on_disconnect
+# below, which dispatch on positional arity.
+_PAHO_HAS_V2 = hasattr(mqtt, 'CallbackAPIVersion')
+
+
 def _make_mqtt_client(client_id=''):
-    # paho-mqtt 2.x requires an explicit callback_api_version; 1.x doesn't
-    # know the kwarg.  pin to VERSION1 so the existing on_connect /
-    # on_disconnect signatures keep working across both lines.
-    try:
+    if _PAHO_HAS_V2:
         return mqtt.Client(
-            callback_api_version=mqtt.CallbackAPIVersion.VERSION1,
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=client_id)
-    except (TypeError, AttributeError):
-        return mqtt.Client(client_id=client_id)
+    return mqtt.Client(client_id=client_id)
+
+
+def _rc_to_int(raw):
+    # paho 1.x:        on_connect / on_disconnect deliver int rc directly
+    # paho 2.x VERSION2: deliver a ReasonCode object whose .value is the int
+    if isinstance(raw, int):
+        return raw
+    return getattr(raw, 'value', 0)
 
 # weewx is hard-required when this module is loaded as a driver, but the
 # standalone test mode (run as __main__) can work without it.  fall back to
@@ -415,7 +426,14 @@ class RTL433MQTTDriver(weewx.drivers.AbstractDevice):
     def hardware_name(self):
         return self._model
 
-    def _on_connect(self, client, userdata, flags, rc):
+    def _on_connect(self, client, userdata, *args, **_kwargs):
+        # signatures we have to accept:
+        #   paho 1.x        : (client, userdata, flags, rc)
+        #   paho 2.x VERSION2: (client, userdata, connect_flags,
+        #                      reason_code, properties)
+        # 'flags' / 'connect_flags' is positional 3 in both; the rc / reason
+        # code is positional 4 in both.  treat anything past that as v2 noise.
+        rc = _rc_to_int(args[1]) if len(args) >= 2 else 0
         if rc == 0:
             loginf("connected to %s:%s" % (self._host, self._port))
             client.subscribe(self._topic)
@@ -423,7 +441,19 @@ class RTL433MQTTDriver(weewx.drivers.AbstractDevice):
         else:
             logerr("mqtt connect returned rc=%s" % rc)
 
-    def _on_disconnect(self, client, userdata, rc):
+    def _on_disconnect(self, client, userdata, *args, **_kwargs):
+        # signatures:
+        #   paho 1.x        : (client, userdata, rc)
+        #   paho 2.x VERSION2: (client, userdata, disconnect_flags,
+        #                      reason_code, properties)
+        # rc is the only positional in v1; in v2 it's positional 4
+        # (after disconnect_flags).
+        if len(args) == 1:
+            rc = _rc_to_int(args[0])
+        elif len(args) >= 2:
+            rc = _rc_to_int(args[1])
+        else:
+            rc = 0
         if rc != 0:
             loginf("unexpected disconnect rc=%s; paho will reconnect" % rc)
 
