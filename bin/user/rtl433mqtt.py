@@ -154,6 +154,7 @@ _US_FROM_METRIC = [
     ('_mm',   '_in',   lambda v: v / 25.4),
     ('_km_h', '_mi_h', lambda v: v * 0.621371),
     ('_kph',  '_mph',  lambda v: v * 0.621371),
+    ('_m_s',  '_mi_h', lambda v: v * 2.23694),
     ('_hPa',  '_inHg', lambda v: v * 0.02953),
 ]
 _METRIC_FROM_US = [
@@ -161,6 +162,7 @@ _METRIC_FROM_US = [
     ('_in',   '_mm',   lambda v: v * 25.4),
     ('_mi_h', '_km_h', lambda v: v / 0.621371),
     ('_mph',  '_kph',  lambda v: v / 0.621371),
+    ('_m_s',  '_km_h', lambda v: v * 3.6),
     ('_inHg', '_hPa',  lambda v: v / 0.02953),
 ]
 

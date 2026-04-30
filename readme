@@ -293,6 +293,7 @@ following suffixes on its way out:
     _mm   <->  _in    (length)
     _km_h <->  _mi_h  (speed)
     _kph  <->  _mph   (speed, alternate label)
+    _m_s  <->  _mi_h  (speed; m/s converts in either direction)
     _hPa  <->  _inHg  (pressure)
 
 # Example: same Acurite Tower sensor, configured for US units
